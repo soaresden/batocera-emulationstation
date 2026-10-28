@@ -316,8 +316,34 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 		
 		// Only display RGB color sliders and modes if the hardware is NOT monochrome
 		if (!ApiSystem::getInstance()->isLEDMonochrome()) {
+			// the settings below are for both sticks, or for one of them
+			if (ApiSystem::getInstance()->hasLEDSticks())
+			{
+				std::string currentSticks = SystemConf::getInstance()->get("led.sticks");
+				auto sticks = std::make_shared<OptionListComponent<std::string>>(mWindow, _("LED SETTINGS FOR"), false);
+				sticks->addRange({
+					{ _("BOTH STICKS"), "both" },
+					{ _("LEFT STICK"), "left" },
+					{ _("RIGHT STICK"), "right" }
+				}, currentSticks.empty() ? "both" : currentSticks);
+				addWithLabel(_("LED SETTINGS FOR"), sticks, autoSel == 4);
+
+				sticks->setSelectedChangedCallback([this, window](const std::string& value)
+				{
+					window->postToUiThread([this, window, value]
+					{
+						// saved for the stick shown, then the menu shows the other one
+						save();
+						SystemConf::getInstance()->set("led.sticks", value);
+						SystemConf::getInstance()->saveSystemConf();
+						delete this;
+						openControllersSettings(window, 4);
+					});
+				});
+			}
+
 			// LED MODE Dropdown Component
-			std::string currentMode = SystemConf::getInstance()->get("led.mode");
+			std::string currentMode = ApiSystem::getInstance()->getLEDSetting("mode");
 			if (currentMode.empty())
 				currentMode = "static";
 
@@ -357,7 +383,7 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 			else
 			{
 				// RGB Configuration Colors
-				std::string colourString = SystemConf::getInstance()->get("led.colour");
+				std::string colourString = ApiSystem::getInstance()->getLEDSetting("colour");
 				if (colourString.empty())
 					colourString = "255 0 165";
 
@@ -400,7 +426,7 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 					*sliderChanged = true;
 					ApiSystem::getInstance()->setLEDColours(redInt, greenInt, blueInt);
 					std::string colourString = std::to_string(redInt) + " " + std::to_string(greenInt) + " " + std::to_string(blueInt);
-					SystemConf::getInstance()->set("led.colour", colourString);
+					ApiSystem::getInstance()->setLEDSetting("colour", colourString);
 				});
 				addWithLabel(_("RED"), redLEDComponent);
 
@@ -412,7 +438,7 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 					*sliderChanged = true;
 					ApiSystem::getInstance()->setLEDColours(redInt, greenInt, blueInt);
 					std::string colourString = std::to_string(redInt) + " " + std::to_string(greenInt) + " " + std::to_string(blueInt);
-					SystemConf::getInstance()->set("led.colour", colourString);
+					ApiSystem::getInstance()->setLEDSetting("colour", colourString);
 				});
 				addWithLabel(_("GREEN"), greenLEDComponent);
 
@@ -424,7 +450,7 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 					*sliderChanged = true;
 					ApiSystem::getInstance()->setLEDColours(redInt, greenInt, blueInt);
 					std::string colourString = std::to_string(redInt) + " " + std::to_string(greenInt) + " " + std::to_string(blueInt);
-					SystemConf::getInstance()->set("led.colour", colourString);
+					ApiSystem::getInstance()->setLEDSetting("colour", colourString);
 				});
 				addWithLabel(_("BLUE"), blueLEDComponent);
 			}
@@ -439,7 +465,7 @@ GuiControllersSettings::GuiControllersSettings(Window* wnd, int autoSel) : GuiSe
 				if (*sliderChanged) {
 					newMode = "static";
 				}
-				if (newMode != SystemConf::getInstance()->get("led.mode")) {
+				if (newMode != ApiSystem::getInstance()->getLEDSetting("mode")) {
 					ApiSystem::getInstance()->setLEDMode(newMode);
 				}
 			});
@@ -704,9 +730,9 @@ void GuiControllersSettings::openLEDBatteryLevels()
 		for (auto level : sorted)
 			value += (value.empty() ? "" : ",") + std::to_string(level.from) + ":" + (level.effect.empty() ? "" : level.effect + "_") + level.colour;
 
-		SystemConf::getInstance()->set("led.battery.levels", value);
-		SystemConf::getInstance()->set("led.battery.charging", *charging);
-		SystemConf::getInstance()->set("led.battery.full", *full);
+		ApiSystem::getInstance()->setLEDSetting("battery.levels", value);
+		ApiSystem::getInstance()->setLEDSetting("battery.charging", *charging);
+		ApiSystem::getInstance()->setLEDSetting("battery.full", *full);
 		SystemConf::getInstance()->saveSystemConf();
 	};
 
@@ -789,9 +815,9 @@ void GuiControllersSettings::openLEDBatteryLevels()
 
 	s->addEntry(_("RESET TO DEFAULT"), false, [this, window, s]
 	{
-		SystemConf::getInstance()->set("led.battery.levels", "");
-		SystemConf::getInstance()->set("led.battery.charging", "");
-		SystemConf::getInstance()->set("led.battery.full", "");
+		ApiSystem::getInstance()->setLEDSetting("battery.levels", "");
+		ApiSystem::getInstance()->setLEDSetting("battery.charging", "");
+		ApiSystem::getInstance()->setLEDSetting("battery.full", "");
 		SystemConf::getInstance()->saveSystemConf();
 
 		window->postToUiThread([this, s]

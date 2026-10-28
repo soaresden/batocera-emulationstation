@@ -360,6 +360,11 @@ public:
 	void setLEDMode(const std::string& mode);
 	std::vector<std::string> getLEDBatteryProfile();
 
+	// led ring per stick: the settings of the stick picked in led.sticks, or the shared ones
+	bool hasLEDSticks();
+	std::string getLEDSetting(const std::string& key);
+	void setLEDSetting(const std::string& key, const std::string& value);
+
 	std::vector<std::string> getWifiNetworks(bool scan = false);
 	std::string getConnectedWifiSsid();
 

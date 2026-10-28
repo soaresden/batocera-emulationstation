@@ -1588,7 +1588,7 @@ bool ApiSystem::getLED(int& red, int& green, int& blue)
 		return true;
 
 	// the battery led mode has no colour sliders, let the daemon keep drawing the level
-	auto blockColourChanges = [this] { if (SystemConf::getInstance()->get("led.mode") != "battery") executeScript("batocera-led-handheld block_color_changes"); };
+	auto blockColourChanges = [this] { if (getLEDSetting("mode") != "battery") executeScript("batocera-led-handheld block_color_changes"); };
 
 	// Anbernic RG 55G1: the stick LEDs sit behind the joypad MCU driver, not the LED class
 	if (Utils::FileSystem::exists("/sys/devices/platform/singleadc-joypad/led_set"))
@@ -1638,8 +1638,8 @@ bool ApiSystem::getLED(int& red, int& green, int& blue)
 			break;
 		}
 
-		if (entry.find("multicolor") != std::string::npos || 
-			entry.find(":rgb:joystick_rings") != std::string::npos || 
+		if (entry.find("multicolor") != std::string::npos ||
+			entry.find(":rgb:joystick_rings") != std::string::npos ||
 			entry.find("rgb:l1") != std::string::npos)
 		{
 			std::string ledColourPath = entry + "/multi_intensity";				
@@ -1737,7 +1737,7 @@ bool ApiSystem::getLED(int& red, int& green, int& blue)
 
 void ApiSystem::getLEDColours(int& red, int& green, int& blue)
 {
-	std::string colourValue = SystemConf::getInstance()->get("led.colour");
+	std::string colourValue = getLEDSetting("colour");
 	if (colourValue.empty())
 		colourValue = "255 0 165";
 
@@ -1788,7 +1788,7 @@ void ApiSystem::setLEDColours(int red, int green, int blue)
 	// We allow this check to be bypassed ONLY if we are turning the LEDs OFF (red=0, green=0, blue=0).
 	if (red != 0 || green != 0 || blue != 0)
 	{
-		std::string currentMode = SystemConf::getInstance()->get("led.mode");
+		std::string currentMode = getLEDSetting("mode");
 		if (currentMode == "rainbow" || currentMode == "chroma" || currentMode == "pulse" || currentMode == "battery")
 		{
 			return; 
@@ -1825,10 +1825,14 @@ void ApiSystem::setLEDColours(int red, int green, int blue)
 			}
 		}
 		else if (LED_COLOUR_NAME.find("rgb:l") != std::string::npos) {
+			// only the stick being set, but both are turned off
+			std::string sticks = SystemConf::getInstance()->get("led.sticks");
+			bool left = sticks != "right" || (red == 0 && green == 0 && blue == 0);
+			bool right = sticks != "left" || (red == 0 && green == 0 && blue == 0);
 			auto allLeds = Utils::FileSystem::getDirContent("/sys/class/leds");
 			for (const auto& ledPath : allLeds) {
-				if (ledPath.find("/rgb:l") != std::string::npos || 
-					ledPath.find("/rgb:r") != std::string::npos) {
+				if ((left && ledPath.find("/rgb:l") != std::string::npos) ||
+					(right && ledPath.find("/rgb:r") != std::string::npos)) {
 					std::string intensityPath = ledPath + "/multi_intensity";
 					if (Utils::FileSystem::exists(intensityPath)) {
 						Utils::FileSystem::writeAllText(intensityPath, ledMultiIntensity(ledPath, red, green, blue));
@@ -1895,7 +1899,7 @@ bool ApiSystem::getLEDBrightness(int& value)
 
         for (const auto& directory : directories)
         {
-            if (directory.find("multicolor") != std::string::npos || 
+            if (directory.find("multicolor") != std::string::npos ||
                 directory.find(":rgb:joystick_rings") != std::string::npos ||
                 directory.find("rgb:l1") != std::string::npos ||
                 // raw l:r1 channels are busy when they belong to an rgb:l* group (Retroid Pocket 5)
@@ -2020,7 +2024,7 @@ void ApiSystem::setLEDBrightness(int value)
     }
     // Check if we are on an addressable device (Retroid/Ayn style)
     // These paths typically look like /sys/class/leds/l:r1
-    else if (LED_BRIGHTNESS_VALUE.find("/l:") != std::string::npos || 
+    else if (LED_BRIGHTNESS_VALUE.find("/l:") != std::string::npos ||
         LED_BRIGHTNESS_VALUE.find("/r:") != std::string::npos) 
     {
         // Batch update all addressable LED channels
@@ -2067,13 +2071,17 @@ void ApiSystem::setLEDMode(const std::string& mode)
 #if WIN32
     return;
 #else
-    SystemConf::getInstance()->set("led.mode", mode);
+    setLEDSetting("mode", mode);
     SystemConf::getInstance()->saveSystemConf();
 
     executeScript("batocera-led-handheld unblock_color_changes");
 
     // the effects run for seconds, don't hold the UI while they play
-    if (mode == "rainbow") {
+    // with a setting per stick, the daemon plays them on its stick only
+    bool split = hasLEDSticks() && (SystemConf::getInstance()->get("led.sticks") == "left" || SystemConf::getInstance()->get("led.sticks") == "right");
+    if (split && (mode == "rainbow" || mode == "chroma" || mode == "pulse")) {
+        return;
+    } else if (mode == "rainbow") {
         executeScript("batocera-led-handheld rainbow &");
     } else if (mode == "chroma") {
         executeScript("batocera-led-handheld chroma &");
@@ -2091,7 +2099,33 @@ void ApiSystem::setLEDMode(const std::string& mode)
 // battery led mode levels, as level=color lines, then charging= and full=
 std::vector<std::string> ApiSystem::getLEDBatteryProfile()
 {
-	return executeEnumerationScript("batocera-led-handheld battery_profile");
+	std::string sticks = SystemConf::getInstance()->get("led.sticks");
+	return executeEnumerationScript("batocera-led-handheld battery_profile" + (sticks == "left" || sticks == "right" ? " " + sticks : ""));
+}
+
+bool ApiSystem::hasLEDSticks()
+{
+	return Utils::FileSystem::exists("/sys/class/leds/rgb:l1") && Utils::FileSystem::exists("/sys/class/leds/rgb:r1");
+}
+
+// led.left.* / led.right.*, or led.* for what the stick does not set
+std::string ApiSystem::getLEDSetting(const std::string& key)
+{
+	std::string sticks = SystemConf::getInstance()->get("led.sticks");
+	std::string value;
+	if (hasLEDSticks() && (sticks == "left" || sticks == "right"))
+		value = SystemConf::getInstance()->get("led." + sticks + "." + key);
+
+	return value.empty() ? SystemConf::getInstance()->get("led." + key) : value;
+}
+
+void ApiSystem::setLEDSetting(const std::string& key, const std::string& value)
+{
+	std::string sticks = SystemConf::getInstance()->get("led.sticks");
+	if (hasLEDSticks() && (sticks == "left" || sticks == "right"))
+		SystemConf::getInstance()->set("led." + sticks + "." + key, value);
+	else
+		SystemConf::getInstance()->set("led." + key, value);
 }
 
 void ApiSystem::setLEDEnabled(bool enabled)
@@ -2107,11 +2141,11 @@ void ApiSystem::setLEDEnabled(bool enabled)
 	}
 	else
 	{
-		std::string mode = SystemConf::getInstance()->get("led.mode");
+		std::string mode = getLEDSetting("mode");
 		if (mode == "rainbow" || mode == "chroma" || mode == "pulse" || mode == "battery") {
 			setLEDMode(mode);
 		} else {
-			std::string lastColorStr = SystemConf::getInstance()->get("led.colour");
+			std::string lastColorStr = getLEDSetting("colour");
 			if (lastColorStr.empty())
 				lastColorStr = "255 0 165";
 
